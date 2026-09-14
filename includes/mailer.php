@@ -5,63 +5,126 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\SMTP;
 use PHPMailer\PHPMailer\Exception;
 
+// ---------- SHARED SMTP CREDENTIALS ----------
+define('SMTP_EMAIL',    'makinafrezer@gmail.com');   // <-- your Gmail address
+define('SMTP_APP_PASS', 'ejdhjxsrmmpvdnkh'); // <-- regenerate this, don't reuse the leaked one
+
+// ---------- ADMIN NOTIFICATION RECIPIENT ----------
+// This can be the same Gmail account, or a separate admin inbox
+define('ADMIN_EMAIL', 'makinafrezer@gmail.com');
+define('ADMIN_NAME',  'AgriMatch Admin');
+
+
 /**
- * Sends an account status notification email to a farmer or buyer
- * using Gmail SMTP via PHPMailer.
+ * Low-level helper: configures and returns a ready-to-send PHPMailer instance.
+ */
+function buildMailer($toEmail, $toName, $subject, $htmlBody) {
+    $mail = new PHPMailer(true);
+
+    $mail->isSMTP();
+    $mail->Host       = 'smtp.gmail.com';
+    $mail->SMTPAuth   = true;
+    $mail->Username   = SMTP_EMAIL;
+    $mail->Password   = SMTP_APP_PASS;
+    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+    $mail->Port       = 587;
+
+    $mail->setFrom(SMTP_EMAIL, 'AgriMatch');
+    $mail->addAddress($toEmail, $toName);
+
+    $mail->isHTML(true);
+    $mail->Subject = $subject;
+    $mail->Body    = $htmlBody;
+
+    return $mail;
+}
+
+
+/**
+ * Sends the account status email to the farmer/buyer themselves,
+ * AND a matching notification email to the admin.
+ *
+ * $status can be: 'pending', 'verified', or 'rejected'
  */
 function sendStatusEmail($toEmail, $toName, $role, $status) {
 
-    // ---------- GMAIL SMTP CREDENTIALS ----------
-    $smtpEmail    = 'makinafrezer@gmail.com';       // <-- CHANGE THIS
-    $smtpAppPass  = 'acxtozmykrrxzrla';           // <-- CHANGE THIS (16-char App Password, no spaces)
+    // ---------- BUILD USER-FACING EMAIL CONTENT ----------
+    $subject = "AgriMatch Account " . ucfirst($status);
 
-    $mail = new PHPMailer(true);
-
-    try {
-        // Server settings
-        $mail->isSMTP();
-        $mail->Host       = 'smtp.gmail.com';
-        $mail->SMTPAuth   = true;
-        $mail->Username   = $smtpEmail;
-        $mail->Password   = $smtpAppPass;
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port       = 587;
-
-        // Sender / recipient
-        $mail->setFrom($smtpEmail, 'AgriMatch Admin');
-        $mail->addAddress($toEmail, $toName);
-
-        // Content
-        $mail->isHTML(true);
-        $mail->Subject = "AgriMatch Account " . ucfirst($status);
-
-        if ($status === 'verified') {
-            $mail->Body = "
-                <h3>Hello {$toName},</h3>
-                <p>Congratulations! Your <strong>{$role}</strong> account on <strong>AgriMatch</strong> has been verified.</p>
-                <p>You can now log in and start using the platform.</p>
-                <p><a href='http://localhost/AgriMatch/auth/login.php'>Click here to log in</a></p>
-                <br>
-                <p>Regards,<br>AgriMatch Admin Team</p>
-            ";
-        } else {
-            $mail->Body = "
-                <h3>Hello {$toName},</h3>
-                <p>We regret to inform you that your <strong>{$role}</strong> account registration on
-                <strong>AgriMatch</strong> has been rejected after review of your submitted documents.</p>
-                <p>If you believe this is a mistake, please contact the administrator or register again
-                with correct documentation.</p>
-                <br>
-                <p>Regards,<br>AgriMatch Admin Team</p>
-            ";
-        }
-
-        $mail->send();
-        return true;
-
-    } catch (Exception $e) {
-        // Log the error so you can debug during the demo if something's wrong
-        error_log("Email failed to send to {$toEmail}: {$mail->ErrorInfo}");
-        return false;
+    if ($status === 'verified') {
+        $userBody = "
+            <h3>Hello {$toName},</h3>
+            <p>Congratulations! Your <strong>{$role}</strong> account on <strong>AgriMatch</strong> has been verified.</p>
+            <p>You can now log in and start using the platform.</p>
+            <p><a href='http://localhost/AgriMatch/auth/login.php'>Click here to log in</a></p>
+            <br>
+            <p>Regards,<br>AgriMatch Admin Team</p>
+        ";
+    } elseif ($status === 'rejected') {
+        $userBody = "
+            <h3>Hello {$toName},</h3>
+            <p>We regret to inform you that your <strong>{$role}</strong> account registration on
+            <strong>AgriMatch</strong> has been rejected after review of your submitted documents.</p>
+            <p>If you believe this is a mistake, please contact the administrator or register again
+            with correct documentation.</p>
+            <br>
+            <p>Regards,<br>AgriMatch Admin Team</p>
+        ";
+    } else { // pending
+        $userBody = "
+            <h3>Hello {$toName},</h3>
+            <p>Thank you for registering as a <strong>{$role}</strong> on <strong>AgriMatch</strong>.</p>
+            <p>Your account and submitted documents are now <strong>pending review</strong> by our admin team.
+            You will receive another email once your account has been verified or if further action is needed.</p>
+            <br>
+            <p>Regards,<br>AgriMatch Admin Team</p>
+        ";
     }
+
+    // ---------- SEND TO USER ----------
+    $userSent = false;
+    try {
+        $mail = buildMailer($toEmail, $toName, $subject, $userBody);
+        $mail->send();
+        $userSent = true;
+    } catch (Exception $e) {
+        error_log("User email failed to send to {$toEmail}: " . $e->getMessage());
+    }
+
+    // ---------- BUILD + SEND ADMIN NOTIFICATION ----------
+    $adminSubject = "AgriMatch: {$role} account " . strtolower($status) . " — {$toName}";
+
+    if ($status === 'pending') {
+        $adminBody = "
+            <h3>New {$role} registration</h3>
+            <p><strong>{$toName}</strong> ({$toEmail}) has just registered as a <strong>{$role}</strong>
+            and their account is now <strong>pending your review</strong>.</p>
+            <p>Please log in to the admin dashboard to view their submitted documents and approve or reject the account.</p>
+            <p><a href='http://localhost/AgriMatch/dashboard.php'>Go to Admin Dashboard</a></p>
+        ";
+    } elseif ($status === 'verified') {
+        $adminBody = "
+            <h3>Account Verified</h3>
+            <p>You approved the <strong>{$role}</strong> account belonging to
+            <strong>{$toName}</strong> ({$toEmail}). A confirmation email has been sent to them.</p>
+        ";
+    } else { // rejected
+        $adminBody = "
+            <h3>Account Rejected</h3>
+            <p>You rejected the <strong>{$role}</strong> account belonging to
+            <strong>{$toName}</strong> ({$toEmail}). A notification email has been sent to them.</p>
+        ";
+    }
+
+    $adminSent = false;
+    try {
+        $adminMail = buildMailer(ADMIN_EMAIL, ADMIN_NAME, $adminSubject, $adminBody);
+        $adminMail->send();
+        $adminSent = true;
+    } catch (Exception $e) {
+        error_log("Admin notification email failed to send: " . $e->getMessage());
+    }
+
+    // Return true only if at least the user email succeeded (admin copy is a bonus, not critical)
+    return $userSent;
 }
