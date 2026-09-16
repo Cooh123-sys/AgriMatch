@@ -63,6 +63,49 @@ CREATE TABLE IF NOT EXISTS farmer_crops (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
+// PRODUCE LISTINGS table (what a farmer posts for sale)
+$tableQueries[] = "
+CREATE TABLE IF NOT EXISTS produce_listings (
+    listing_id INT AUTO_INCREMENT PRIMARY KEY,
+    farmer_id INT NOT NULL,
+    crop_type VARCHAR(100) NOT NULL,
+    variety VARCHAR(100) DEFAULT NULL,
+    quantity DECIMAL(10,2) NOT NULL,
+    unit ENUM('kg','tonnes','bags_50kg','bags_90kg','crates') NOT NULL DEFAULT 'kg',
+    price_per_unit DECIMAL(10,2) DEFAULT NULL,
+    quality_grade ENUM('grade_a','grade_b','grade_c','ungraded') NOT NULL DEFAULT 'ungraded',
+    harvest_date DATE DEFAULT NULL,
+    available_from DATE NOT NULL,
+    available_until DATE DEFAULT NULL,
+    location VARCHAR(150) NOT NULL,
+    description TEXT DEFAULT NULL,
+    photo VARCHAR(255) DEFAULT NULL,
+    status ENUM('available','matched','sold','withdrawn') NOT NULL DEFAULT 'available',
+    date_posted TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farmer_id) REFERENCES farmer_details(farmer_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+";
+
+// DEMANDS table (what a buyer posts as a requirement)
+$tableQueries[] = "
+CREATE TABLE IF NOT EXISTS demands (
+    demand_id INT AUTO_INCREMENT PRIMARY KEY,
+    buyer_id INT NOT NULL,
+    crop_type VARCHAR(100) NOT NULL,
+    min_quantity DECIMAL(10,2) NOT NULL,
+    unit ENUM('kg','tonnes','bags_50kg','bags_90kg','crates') NOT NULL DEFAULT 'kg',
+    preferred_quality ENUM('grade_a','grade_b','grade_c','any') NOT NULL DEFAULT 'any',
+    max_price_per_unit DECIMAL(10,2) DEFAULT NULL,
+    preferred_location VARCHAR(150) NOT NULL,
+    needed_by DATE DEFAULT NULL,
+    frequency ENUM('one_time','weekly','monthly','ongoing') NOT NULL DEFAULT 'one_time',
+    description TEXT DEFAULT NULL,
+    status ENUM('open','matched','fulfilled','closed') NOT NULL DEFAULT 'open',
+    date_posted TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (buyer_id) REFERENCES buyer_details(buyer_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+";
+
 // BUYER DETAILS table
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS buyer_details (
