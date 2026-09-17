@@ -106,6 +106,20 @@ CREATE TABLE IF NOT EXISTS demands (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
+// MATCHES table (tracks proposed/accepted connections between a listing and a demand)
+$tableQueries[] = "
+CREATE TABLE IF NOT EXISTS matches (
+    match_id INT AUTO_INCREMENT PRIMARY KEY,
+    listing_id INT NOT NULL,
+    demand_id INT NOT NULL,
+    status ENUM('proposed','accepted','rejected') NOT NULL DEFAULT 'proposed',
+    match_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_match (listing_id, demand_id),
+    FOREIGN KEY (listing_id) REFERENCES produce_listings(listing_id) ON DELETE CASCADE,
+    FOREIGN KEY (demand_id) REFERENCES demands(demand_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+";
+
 // BUYER DETAILS table
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS buyer_details (
