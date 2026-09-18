@@ -128,3 +128,67 @@ function sendStatusEmail($toEmail, $toName, $role, $status) {
     // Return true only if at least the user email succeeded (admin copy is a bonus, not critical)
     return $userSent;
 }
+
+/**
+ * Sends a match-related notification email.
+ *
+ * $event can be: 'requested', 'accepted', 'rejected'
+ * $recipientRole is the role of the PERSON RECEIVING this email ('farmer' or 'buyer')
+ */
+function sendMatchEmail($toEmail, $toName, $recipientRole, $event, $cropType, $otherPartyName = null, $otherPartyPhone = null, $otherPartyEmail = null) {
+
+    $subject = "AgriMatch: Match " . ucfirst($event) . " — {$cropType}";
+
+    if ($event === 'requested') {
+        // Only farmers receive this — a buyer wants to match with their listing
+        $body = "
+            <h3>Hello {$toName},</h3>
+            <p>A buyer has requested to match with your <strong>{$cropType}</strong> listing on AgriMatch.</p>
+            <p>Please log in to review the request and accept or reject it.</p>
+            <p><a href='http://localhost/AgriMatch/farmer/matches.php'>View Match Request</a></p>
+            <br>
+            <p>Regards,<br>AgriMatch Team</p>
+        ";
+
+    } elseif ($event === 'accepted') {
+        // Sent to BOTH parties once a farmer accepts
+        $contactBlock = "";
+        if ($otherPartyName) {
+            $label = $recipientRole === 'farmer' ? 'Buyer' : 'Farmer';
+            $contactBlock = "
+                <p><strong>{$label} Contact Details:</strong><br>
+                Name: {$otherPartyName}<br>
+                Phone: {$otherPartyPhone}<br>
+                Email: {$otherPartyEmail}</p>
+            ";
+        }
+        $body = "
+            <h3>Hello {$toName},</h3>
+            <p>Good news! Your <strong>{$cropType}</strong> match on AgriMatch has been <strong>accepted</strong>.</p>
+            {$contactBlock}
+            <p>You can now contact each other directly to arrange the transaction.</p>
+            <br>
+            <p>Regards,<br>AgriMatch Team</p>
+        ";
+
+    } else { // rejected
+        // Only the buyer receives this — the farmer declined
+        $body = "
+            <h3>Hello {$toName},</h3>
+            <p>Unfortunately, your match request for <strong>{$cropType}</strong> was <strong>declined</strong> by the farmer.</p>
+            <p>Don't worry — other matching farmers may still be available. Log in to check your matches.</p>
+            <p><a href='http://localhost/AgriMatch/buyer/matched_farmers.php'>View Matched Farmers</a></p>
+            <br>
+            <p>Regards,<br>AgriMatch Team</p>
+        ";
+    }
+
+    try {
+        $mail = buildMailer($toEmail, $toName, $subject, $body);
+        $mail->send();
+        return true;
+    } catch (Exception $e) {
+        error_log("Match email failed to send to {$toEmail}: " . $e->getMessage());
+        return false;
+    }
+}

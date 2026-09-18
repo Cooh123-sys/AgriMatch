@@ -4,6 +4,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../matching/match_engine.php';
+require_once __DIR__ . '/../includes/mailer.php';
 
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'buyer') {
     header('Location: /AgriMatch/auth/login.php');
@@ -29,7 +30,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['listing_id'], $_POST[
     $listingId = (int) $_POST['listing_id'];
     $demandId  = (int) $_POST['demand_id'];
 
-    // Confirm this demand belongs to the logged-in buyer
     $stmt = $conn->prepare("SELECT demand_id FROM demands WHERE demand_id = ? AND buyer_id = ?");
     $stmt->bind_param('ii', $demandId, $buyerId);
     $stmt->execute();
@@ -46,6 +46,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['listing_id'], $_POST[
         $stmt->execute();
         $stmt->close();
 
+        $stmt = $conn->prepare("
+            SELECT u.full_name, u.email, p.crop_type
+            FROM produce_listings p
+            JOIN farmer_details f ON f.farmer_id = p.farmer_id
+            JOIN users u ON u.user_id = f.user_id
+            WHERE p.listing_id = ?
+        ");
+        $stmt->bind_param('i', $listingId);
+        $stmt->execute();
+        $farmerInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if ($farmerInfo) {
+            sendMatchEmail($farmerInfo['email'], $farmerInfo['full_name'], 'farmer', 'requested', $farmerInfo['crop_type']);
+        }
+
         $_SESSION['flash'] = [
             'type' => 'success',
             'msg'  => 'Match request sent to the farmer. You will be able to see their contact details once they accept.'
@@ -56,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['listing_id'], $_POST[
     exit;
 }
 
-// ---------- FETCH THIS BUYER'S OPEN DEMANDS ----------
+// ---------- FETCH THIS BUYER'S OPEN/MATCHED DEMANDS ----------
 $stmt = $conn->prepare("
     SELECT demand_id, crop_type, min_quantity, unit, preferred_location, status
     FROM demands
@@ -110,62 +126,94 @@ require_once __DIR__ . '/../includes/header.php';
                 <span class="badge bg-light text-dark"><?php echo ucfirst($d['status']); ?></span>
             </div>
             <div class="card-body">
-                <?php
-                $matchedListings = getMatchesForDemand($conn, $d['demand_id']);
-                ?>
 
-                <?php if (empty($matchedListings)): ?>
-                    <p class="text-muted mb-0">No matching farmers found yet for this demand. Check back later as new produce is posted.</p>
-                <?php else: ?>
+                <?php $acceptedMatches = getAcceptedMatchForDemand($conn, $d['demand_id']); ?>
+
+                <?php if (!empty($acceptedMatches)): ?>
+
+                    <!-- This demand already has an accepted match — show the farmer's contact details directly -->
                     <div class="row g-3">
-                        <?php foreach ($matchedListings as $l): ?>
-                            <?php $matchStatus = getMatchStatus($conn, $l['listing_id'], $d['demand_id']); ?>
+                        <?php foreach ($acceptedMatches as $am): ?>
                             <div class="col-md-6">
                                 <div class="border rounded p-3 h-100">
                                     <div class="d-flex justify-content-between">
-                                        <h6 class="mb-1"><?php echo htmlspecialchars($l['crop_type']); ?>
-                                            <?php if ($l['variety']): ?> <small class="text-muted">(<?php echo htmlspecialchars($l['variety']); ?>)</small><?php endif; ?>
+                                        <h6 class="mb-1"><?php echo htmlspecialchars($am['crop_type']); ?>
+                                            <?php if ($am['variety']): ?> <small class="text-muted">(<?php echo htmlspecialchars($am['variety']); ?>)</small><?php endif; ?>
                                         </h6>
-                                        <?php if ($matchStatus): ?>
-                                            <span class="badge bg-<?php
-                                                echo $matchStatus === 'accepted' ? 'success' : ($matchStatus === 'proposed' ? 'warning' : 'danger');
-                                            ?>"><?php echo ucfirst($matchStatus); ?></span>
-                                        <?php endif; ?>
+                                        <span class="badge bg-success">Accepted</span>
                                     </div>
                                     <p class="mb-1 small">
-                                        <i class="bi bi-box-seam"></i> <?php echo number_format($l['quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$l['unit']] ?? $l['unit']); ?>
+                                        <i class="bi bi-box-seam"></i> <?php echo number_format($am['quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$am['unit']] ?? $am['unit']); ?>
                                         &nbsp;|&nbsp;
-                                        <i class="bi bi-award"></i> <?php echo htmlspecialchars($gradeLabels[$l['quality_grade']] ?? $l['quality_grade']); ?>
+                                        <i class="bi bi-award"></i> <?php echo htmlspecialchars($gradeLabels[$am['quality_grade']] ?? $am['quality_grade']); ?>
                                     </p>
-                                    <p class="mb-1 small"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($l['location']); ?></p>
-                                    <?php if ($l['price_per_unit']): ?>
-                                        <p class="mb-2 small"><i class="bi bi-cash"></i> MWK <?php echo number_format($l['price_per_unit'], 2); ?> per <?php echo htmlspecialchars($unitLabels[$l['unit']] ?? $l['unit']); ?></p>
+                                    <p class="mb-1 small"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($am['location']); ?></p>
+                                    <?php if ($am['price_per_unit']): ?>
+                                        <p class="mb-2 small"><i class="bi bi-cash"></i> MWK <?php echo number_format($am['price_per_unit'], 2); ?> per <?php echo htmlspecialchars($unitLabels[$am['unit']] ?? $am['unit']); ?></p>
                                     <?php endif; ?>
-
-                                    <?php if ($matchStatus === 'accepted'): ?>
-                                        <div class="alert alert-success py-2 px-3 mb-0 small">
-                                            <i class="bi bi-check-circle"></i> <strong>Farmer:</strong> <?php echo htmlspecialchars($l['farmer_name']); ?><br>
-                                            <i class="bi bi-telephone"></i> <?php echo htmlspecialchars($l['farmer_phone']); ?><br>
-                                            <i class="bi bi-envelope"></i> <?php echo htmlspecialchars($l['farmer_email']); ?>
-                                        </div>
-                                    <?php elseif ($matchStatus === 'proposed'): ?>
-                                        <p class="text-muted small mb-0"><i class="bi bi-hourglass-split"></i> Waiting for farmer response...</p>
-                                    <?php elseif ($matchStatus === 'rejected'): ?>
-                                        <p class="text-muted small mb-0"><i class="bi bi-x-circle"></i> Farmer declined this request.</p>
-                                    <?php else: ?>
-                                        <form method="POST">
-                                            <input type="hidden" name="listing_id" value="<?php echo $l['listing_id']; ?>">
-                                            <input type="hidden" name="demand_id" value="<?php echo $d['demand_id']; ?>">
-                                            <button type="submit" class="btn btn-sm btn-success">
-                                                <i class="bi bi-send"></i> Request Match
-                                            </button>
-                                        </form>
-                                    <?php endif; ?>
+                                    <div class="alert alert-success py-2 px-3 mb-0 small">
+                                        <i class="bi bi-check-circle"></i> <strong>Farmer:</strong> <?php echo htmlspecialchars($am['farmer_name']); ?><br>
+                                        <i class="bi bi-telephone"></i> <?php echo htmlspecialchars($am['farmer_phone']); ?><br>
+                                        <i class="bi bi-envelope"></i> <?php echo htmlspecialchars($am['farmer_email']); ?>
+                                    </div>
                                 </div>
                             </div>
                         <?php endforeach; ?>
                     </div>
+
+                <?php else: ?>
+
+                    <?php $matchedListings = getMatchesForDemand($conn, $d['demand_id']); ?>
+
+                    <?php if (empty($matchedListings)): ?>
+                        <p class="text-muted mb-0">No matching farmers found yet for this demand. Check back later as new produce is posted.</p>
+                    <?php else: ?>
+                        <div class="row g-3">
+                            <?php foreach ($matchedListings as $l): ?>
+                                <?php $matchStatus = getMatchStatus($conn, $l['listing_id'], $d['demand_id']); ?>
+                                <div class="col-md-6">
+                                    <div class="border rounded p-3 h-100">
+                                        <div class="d-flex justify-content-between">
+                                            <h6 class="mb-1"><?php echo htmlspecialchars($l['crop_type']); ?>
+                                                <?php if ($l['variety']): ?> <small class="text-muted">(<?php echo htmlspecialchars($l['variety']); ?>)</small><?php endif; ?>
+                                            </h6>
+                                            <?php if ($matchStatus): ?>
+                                                <span class="badge bg-<?php
+                                                    echo $matchStatus === 'accepted' ? 'success' : ($matchStatus === 'proposed' ? 'warning' : 'danger');
+                                                ?>"><?php echo ucfirst($matchStatus); ?></span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <p class="mb-1 small">
+                                            <i class="bi bi-box-seam"></i> <?php echo number_format($l['quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$l['unit']] ?? $l['unit']); ?>
+                                            &nbsp;|&nbsp;
+                                            <i class="bi bi-award"></i> <?php echo htmlspecialchars($gradeLabels[$l['quality_grade']] ?? $l['quality_grade']); ?>
+                                        </p>
+                                        <p class="mb-1 small"><i class="bi bi-geo-alt"></i> <?php echo htmlspecialchars($l['location']); ?></p>
+                                        <?php if ($l['price_per_unit']): ?>
+                                            <p class="mb-2 small"><i class="bi bi-cash"></i> MWK <?php echo number_format($l['price_per_unit'], 2); ?> per <?php echo htmlspecialchars($unitLabels[$l['unit']] ?? $l['unit']); ?></p>
+                                        <?php endif; ?>
+
+                                        <?php if ($matchStatus === 'proposed'): ?>
+                                            <p class="text-muted small mb-0"><i class="bi bi-hourglass-split"></i> Waiting for farmer response...</p>
+                                        <?php elseif ($matchStatus === 'rejected'): ?>
+                                            <p class="text-muted small mb-0"><i class="bi bi-x-circle"></i> Farmer declined this request.</p>
+                                        <?php else: ?>
+                                            <form method="POST">
+                                                <input type="hidden" name="listing_id" value="<?php echo $l['listing_id']; ?>">
+                                                <input type="hidden" name="demand_id" value="<?php echo $d['demand_id']; ?>">
+                                                <button type="submit" class="btn btn-sm btn-success">
+                                                    <i class="bi bi-send"></i> Request Match
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
                 <?php endif; ?>
+
             </div>
         </div>
     <?php endforeach; ?>

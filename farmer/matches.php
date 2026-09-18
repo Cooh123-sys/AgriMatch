@@ -3,6 +3,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/mailer.php';
 
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'farmer') {
     header('Location: /AgriMatch/auth/login.php');
@@ -58,6 +59,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['match_id'], $_POST['a
             $stmt->execute();
             $stmt->close();
 
+            // Fetch both parties' info to notify them and share contact details
+            $stmt = $conn->prepare("
+                SELECT p.crop_type,
+                uf.full_name AS farmer_name, uf.phone AS farmer_phone, uf.email AS farmer_email,
+                ub.full_name AS buyer_name, ub.phone AS buyer_phone, ub.email AS buyer_email
+                FROM matches m
+                JOIN produce_listings p ON p.listing_id = m.listing_id
+                JOIN farmer_details f ON f.farmer_id = p.farmer_id
+                JOIN users uf ON uf.user_id = f.user_id
+                JOIN demands d ON d.demand_id = m.demand_id
+                JOIN buyer_details b ON b.buyer_id = d.buyer_id
+                JOIN users ub ON ub.user_id = b.user_id
+                WHERE m.match_id = ?
+            ");
+            $stmt->bind_param('i', $matchId);
+            $stmt->execute();
+            $info = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if ($info) {
+                // Email the farmer, showing the buyer's contact details
+                sendMatchEmail(
+                    $info['farmer_email'], $info['farmer_name'], 'farmer', 'accepted', $info['crop_type'],
+                    $info['buyer_name'], $info['buyer_phone'], $info['buyer_email']
+                );
+                // Email the buyer, showing the farmer's contact details
+                sendMatchEmail(
+                    $info['buyer_email'], $info['buyer_name'], 'buyer', 'accepted', $info['crop_type'],
+                    $info['farmer_name'], $info['farmer_phone'], $info['farmer_email']
+                );
+            }
+
             $_SESSION['flash'] = ['type' => 'success', 'msg' => 'Match accepted! The buyer can now see your contact details.'];
 
         } elseif ($action === 'reject') {
@@ -65,6 +98,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['match_id'], $_POST['a
             $stmt->bind_param('i', $matchId);
             $stmt->execute();
             $stmt->close();
+
+            // Notify the buyer that their request was declined
+            $stmt = $conn->prepare("
+                SELECT p.crop_type, ub.full_name AS buyer_name, ub.email AS buyer_email
+                FROM matches m
+                JOIN produce_listings p ON p.listing_id = m.listing_id
+                JOIN demands d ON d.demand_id = m.demand_id
+                JOIN buyer_details b ON b.buyer_id = d.buyer_id
+                JOIN users ub ON ub.user_id = b.user_id
+                WHERE m.match_id = ?
+            ");
+            $stmt->bind_param('i', $matchId);
+            $stmt->execute();
+            $info = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if ($info) {
+                sendMatchEmail($info['buyer_email'], $info['buyer_name'], 'buyer', 'rejected', $info['crop_type']);
+            }
+
             $_SESSION['flash'] = ['type' => 'warning', 'msg' => 'Match request declined.'];
         }
     }

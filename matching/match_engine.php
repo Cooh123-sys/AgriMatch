@@ -114,3 +114,32 @@ function getMatchStatus($conn, $listingId, $demandId) {
     $stmt->close();
     return $row ? $row['status'] : null;
 }
+
+/**
+ * Returns the accepted match (with farmer contact info) for a given demand, if one exists.
+ * Bypasses the "available" status filter, since an accepted listing is intentionally
+ * moved to 'matched' status and would otherwise vanish from getMatchesForDemand().
+ */
+function getAcceptedMatchForDemand($conn, $demandId) {
+    $stmt = $conn->prepare("
+        SELECT m.match_id, p.listing_id, p.crop_type, p.variety, p.quantity, p.unit,
+               p.quality_grade, p.price_per_unit, p.location,
+               u.full_name AS farmer_name, u.phone AS farmer_phone, u.email AS farmer_email
+        FROM matches m
+        JOIN produce_listings p ON p.listing_id = m.listing_id
+        JOIN farmer_details f ON f.farmer_id = p.farmer_id
+        JOIN users u ON u.user_id = f.user_id
+        WHERE m.demand_id = ? AND m.status = 'accepted'
+    ");
+    $stmt->bind_param('i', $demandId);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $accepted = [];
+    while ($row = $result->fetch_assoc()) {
+        $accepted[] = $row;
+    }
+    $stmt->close();
+
+    return $accepted;
+}
