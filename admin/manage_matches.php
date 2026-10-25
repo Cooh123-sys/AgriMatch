@@ -4,6 +4,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/mailer.php';
+require_once '../matching/match_engine.php';
 
 // Guard: only admins allowed
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
@@ -46,10 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['match_id'], $_POST['a
         $stmt->execute();
         $stmt->close();
 
-        $stmt = $conn->prepare("UPDATE demands SET status = 'open' WHERE demand_id = ?");
-        $stmt->bind_param('i', $info['demand_id']);
-        $stmt->execute();
-        $stmt->close();
+        refreshDemandStatus($conn, $info['demand_id']);
 
         // Notify both parties
         $subject = "AgriMatch: Match Cancelled by Admin — {$info['crop_type']}";

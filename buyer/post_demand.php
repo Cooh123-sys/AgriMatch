@@ -170,7 +170,7 @@ require_once __DIR__ . '/../includes/header.php';
                             <input type="number" step="0.01" min="0.01" class="form-control" name="min_quantity"
                                    placeholder="e.g. 1000"
                                    value="<?php echo htmlspecialchars($old['min_quantity'] ?? ''); ?>" required>
-                            <small class="text-muted">Only farmers who can supply at least this quantity will be matched.</small>
+                            <small class="text-muted">Farmers' produce is combined (aggregated) to reach this quantity, so several smaller farmers can fill one demand.</small>
                         </div>
 
                         <div class="col-md-6 mb-3">
