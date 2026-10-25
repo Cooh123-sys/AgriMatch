@@ -4,6 +4,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../includes/mailer.php';
+require_once __DIR__ . '/../matching/match_engine.php';
 
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'farmer') {
     header('Location: /AgriMatch/auth/login.php');
@@ -54,10 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['match_id'], $_POST['a
             $stmt->execute();
             $stmt->close();
 
-            $stmt = $conn->prepare("UPDATE demands SET status = 'matched' WHERE demand_id = ?");
-            $stmt->bind_param('i', $match['demand_id']);
-            $stmt->execute();
-            $stmt->close();
+            // Demand only becomes 'matched' once accepted farmers' combined quantity covers it
+            refreshDemandStatus($conn, $match['demand_id']);
 
             // Fetch both parties' info to notify them and share contact details
             $stmt = $conn->prepare("
