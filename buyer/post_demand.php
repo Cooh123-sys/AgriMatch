@@ -12,7 +12,6 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'buyer') {
 
 $userId = $_SESSION['user_id'];
 
-// Fetch buyer record (need buyer_id, physical_address, and status)
 $stmt = $conn->prepare("
     SELECT u.full_name AS company_name, u.status, b.buyer_id, b.physical_address
     FROM users u
@@ -39,26 +38,26 @@ $old = $_POST;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    $cropType         = trim($_POST['crop_type'] ?? '');
-    $minQuantity      = trim($_POST['min_quantity'] ?? '');
-    $unit             = $_POST['unit'] ?? '';
-    $preferredQuality = $_POST['preferred_quality'] ?? 'any';
-    $maxPrice         = trim($_POST['max_price_per_unit'] ?? '');
-    $preferredLocation= trim($_POST['preferred_location'] ?? '');
-    $neededBy         = $_POST['needed_by'] ?? '';
-    $frequency        = $_POST['frequency'] ?? 'one_time';
-    $description      = trim($_POST['description'] ?? '');
+    $cropType          = trim($_POST['crop_type'] ?? '');
+    $minQuantity       = trim($_POST['min_quantity'] ?? '');
+    $unit              = $_POST['unit'] ?? '';
+    $preferredQuality  = $_POST['preferred_quality'] ?? 'any';
+    $maxPrice          = trim($_POST['max_price_per_unit'] ?? '');
+    $preferredLocation = trim($_POST['preferred_location'] ?? '');
+    $neededBy          = $_POST['needed_by'] ?? '';
+    $frequency         = $_POST['frequency'] ?? 'one_time';
+    $description       = trim($_POST['description'] ?? '');
 
-    $validUnits      = ['kg','tonnes','bags_50kg','bags_90kg','crates'];
-    $validQualities  = ['grade_a','grade_b','grade_c','any'];
-    $validFrequencies= ['one_time','weekly','monthly','ongoing'];
+    $validUnits       = ['kg','tonnes','bags_50kg','bags_90kg','crates'];
+    $validQualities   = ['grade_a','grade_b','grade_c','any'];
+    $validFrequencies = ['one_time','weekly','monthly','ongoing'];
 
     // ---------- VALIDATION ----------
     if ($cropType === '') {
         $errors[] = 'Crop type is required.';
     }
     if ($minQuantity === '' || !is_numeric($minQuantity) || $minQuantity <= 0) {
-        $errors[] = 'Enter a valid minimum quantity greater than zero.';
+        $errors[] = 'Enter a valid quantity greater than zero.';
     }
     if (!in_array($unit, $validUnits)) {
         $errors[] = 'Select a valid unit of measurement.';
@@ -70,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Maximum price must be a valid number.';
     }
     if ($preferredLocation === '') {
-        $errors[] = 'Preferred sourcing location is required.';
+        $errors[] = 'Delivery location is required.';
     }
     if ($neededBy !== '' && $neededBy < date('Y-m-d')) {
         $errors[] = 'Needed-by date cannot be in the past.';
@@ -109,7 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->close();
             $_SESSION['flash'] = [
                 'type' => 'success',
-                'msg'  => 'Demand posted successfully! Matching farmers will be identified based on your requirements.'
+                'msg'  => 'Demand posted! Matching produce from farmers will appear on your Matched Farmers page.'
             ];
             header('Location: /AgriMatch/buyer/my_demands.php');
             exit;
@@ -166,11 +165,11 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <div class="row">
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Minimum Quantity Needed <span class="text-danger">*</span></label>
+                            <label class="form-label">Quantity Needed <span class="text-danger">*</span></label>
                             <input type="number" step="0.01" min="0.01" class="form-control" name="min_quantity"
                                    placeholder="e.g. 1000"
                                    value="<?php echo htmlspecialchars($old['min_quantity'] ?? ''); ?>" required>
-                            <small class="text-muted">Farmers' produce is combined (aggregated) to reach this quantity, so several smaller farmers can fill one demand.</small>
+                            <small class="text-muted">Produce from several farmers is combined (aggregated) to reach this quantity, so no single farmer needs to supply it all.</small>
                         </div>
 
                         <div class="col-md-6 mb-3">
@@ -192,6 +191,7 @@ require_once __DIR__ . '/../includes/header.php';
                                     </option>
                                 <?php endforeach; ?>
                             </select>
+                            <small class="text-muted">Crates only combine with other crates.</small>
                         </div>
                     </div>
 
@@ -227,15 +227,15 @@ require_once __DIR__ . '/../includes/header.php';
 
                     <hr>
 
-                    <!-- ---------- SOURCING PREFERENCES ---------- -->
-                    <h6 class="text-success fw-bold mb-3">Sourcing Preferences</h6>
+                    <!-- ---------- DELIVERY & TIMING ---------- -->
+                    <h6 class="text-success fw-bold mb-3">Delivery &amp; Timing</h6>
 
                     <div class="mb-3">
-                        <label class="form-label">Preferred Sourcing Location <span class="text-danger">*</span></label>
+                        <label class="form-label">Delivery / Collection Location <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" name="preferred_location"
-                               placeholder="e.g. Lunzu, Blantyre Rural"
+                               placeholder="e.g. Our warehouse, Limbe, Blantyre"
                                value="<?php echo htmlspecialchars($old['preferred_location'] ?? $buyer['physical_address']); ?>" required>
-                        <small class="text-muted">Only farmers within this area will be matched (Level 3 of our matching system).</small>
+                        <small class="text-muted">Shown to farmers for information only. Produce from any location can be matched to your demand.</small>
                     </div>
 
                     <div class="row">

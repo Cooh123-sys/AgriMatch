@@ -4,7 +4,7 @@
 // ----- Connection settings (WAMP defaults) -----
 define('DB_HOST', 'localhost');
 define('DB_USER', 'root');
-define('DB_PASS', '');           // default WAMP root password is empty
+define('DB_PASS', '');
 define('DB_NAME', 'agrimatch');
 
 // 1. Connect to MySQL server WITHOUT selecting a database yet
@@ -24,9 +24,10 @@ if (!$conn->query($sql)) {
 $conn->select_db(DB_NAME);
 
 // 4. Create tables if they don't exist
+//    ORDER MATTERS: a table must exist before another table references it with a foreign key.
 $tableQueries = [];
 
-// USERS table (shared login table for farmer, buyer, admin)
+// USERS (shared login table for farmer, buyer, admin)
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -40,20 +41,20 @@ CREATE TABLE IF NOT EXISTS users (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
-// FARMER DETAILS table
+// FARMER DETAILS
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS farmer_details (
     farmer_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     location VARCHAR(150) NOT NULL,
-    id_document VARCHAR(255) DEFAULT NULL,   -- uploaded National ID file path
-    map_document VARCHAR(255) DEFAULT NULL,  -- uploaded map-to-home file path
+    id_document VARCHAR(255) DEFAULT NULL,
+    map_document VARCHAR(255) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
-// FARMER CROPS table (one farmer -> many crop types)
+// FARMER CROPS (one farmer -> many crop types)
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS farmer_crops (
     crop_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -63,7 +64,20 @@ CREATE TABLE IF NOT EXISTS farmer_crops (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
-// PRODUCE LISTINGS table (what a farmer posts for sale)
+// BUYER DETAILS
+$tableQueries[] = "
+CREATE TABLE IF NOT EXISTS buyer_details (
+    buyer_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    physical_address VARCHAR(255) NOT NULL,
+    organization_type ENUM('school','hotel','manufacturing_company','hospital','retailer','wholesaler','exporter','other') NOT NULL,
+    business_certificate VARCHAR(255) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+";
+
+// PRODUCE LISTINGS (needs farmer_details)
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS produce_listings (
     listing_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -86,7 +100,7 @@ CREATE TABLE IF NOT EXISTS produce_listings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
-// DEMANDS table (what a buyer posts as a requirement)
+// DEMANDS (needs buyer_details)
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS demands (
     demand_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -106,12 +120,14 @@ CREATE TABLE IF NOT EXISTS demands (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
-// MATCHES table (tracks proposed/accepted connections between a listing and a demand)
+// MATCHES (needs produce_listings + demands)
+// requested_by = which side started the request; the OTHER side accepts or declines.
 $tableQueries[] = "
 CREATE TABLE IF NOT EXISTS matches (
     match_id INT AUTO_INCREMENT PRIMARY KEY,
     listing_id INT NOT NULL,
     demand_id INT NOT NULL,
+    requested_by ENUM('buyer','farmer') NOT NULL DEFAULT 'buyer',
     status ENUM('proposed','accepted','rejected') NOT NULL DEFAULT 'proposed',
     match_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY unique_match (listing_id, demand_id),
@@ -120,27 +136,20 @@ CREATE TABLE IF NOT EXISTS matches (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ";
 
-// BUYER DETAILS table
-$tableQueries[] = "
-CREATE TABLE IF NOT EXISTS buyer_details (
-    buyer_id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    physical_address VARCHAR(255) NOT NULL,
-    organization_type ENUM('school','hotel','manufacturing_company','hospital','retailer','wholesaler','exporter','other') NOT NULL,
-    business_certificate VARCHAR(255) DEFAULT NULL, -- uploaded certificate file path
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-";
-
-// Run each table creation query
 foreach ($tableQueries as $query) {
     if (!$conn->query($query)) {
         die('Error creating table: ' . $conn->error);
     }
 }
 
-// 5. Seed a default admin account if none exists yet
+// 5. MIGRATION: databases created before two-way requests lack matches.requested_by.
+//    Old rows default to 'buyer', which is correct (only buyers could request before).
+$colCheck = $conn->query("SHOW COLUMNS FROM matches LIKE 'requested_by'");
+if ($colCheck && $colCheck->num_rows === 0) {
+    $conn->query("ALTER TABLE matches ADD COLUMN requested_by ENUM('buyer','farmer') NOT NULL DEFAULT 'buyer' AFTER demand_id");
+}
+
+// 6. Seed a default admin account if none exists yet
 $check = $conn->query("SELECT user_id FROM users WHERE role = 'admin' LIMIT 1");
 if ($check->num_rows === 0) {
     $adminName  = 'System Administrator';

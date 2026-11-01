@@ -7,10 +7,9 @@ use PHPMailer\PHPMailer\Exception;
 
 // ---------- SHARED SMTP CREDENTIALS ----------
 define('SMTP_EMAIL',    'makinafrezer@gmail.com');   // <-- your Gmail address
-define('SMTP_APP_PASS', 'ejdhjxsrmmpvdnkh'); // <-- regenerate this, don't reuse the leaked one
+define('SMTP_APP_PASS', 'ejdhjxsrmmpvdnkh');
 
 // ---------- ADMIN NOTIFICATION RECIPIENT ----------
-// This can be the same Gmail account, or a separate admin inbox
 define('ADMIN_EMAIL', 'makinafrezer@gmail.com');
 define('ADMIN_NAME',  'AgriMatch Admin');
 
@@ -41,14 +40,11 @@ function buildMailer($toEmail, $toName, $subject, $htmlBody) {
 
 
 /**
- * Sends the account status email to the farmer/buyer themselves,
- * AND a matching notification email to the admin.
- *
- * $status can be: 'pending', 'verified', or 'rejected'
+ * Account status email to the farmer/buyer AND a matching notification to the admin.
+ * $status: 'pending', 'verified', or 'rejected'
  */
 function sendStatusEmail($toEmail, $toName, $role, $status) {
 
-    // ---------- BUILD USER-FACING EMAIL CONTENT ----------
     $subject = "AgriMatch Account " . ucfirst($status);
 
     if ($status === 'verified') {
@@ -81,7 +77,6 @@ function sendStatusEmail($toEmail, $toName, $role, $status) {
         ";
     }
 
-    // ---------- SEND TO USER ----------
     $userSent = false;
     try {
         $mail = buildMailer($toEmail, $toName, $subject, $userBody);
@@ -91,7 +86,6 @@ function sendStatusEmail($toEmail, $toName, $role, $status) {
         error_log("User email failed to send to {$toEmail}: " . $e->getMessage());
     }
 
-    // ---------- BUILD + SEND ADMIN NOTIFICATION ----------
     $adminSubject = "AgriMatch: {$role} account " . strtolower($status) . " — {$toName}";
 
     if ($status === 'pending') {
@@ -108,7 +102,7 @@ function sendStatusEmail($toEmail, $toName, $role, $status) {
             <p>You approved the <strong>{$role}</strong> account belonging to
             <strong>{$toName}</strong> ({$toEmail}). A confirmation email has been sent to them.</p>
         ";
-    } else { // rejected
+    } else {
         $adminBody = "
             <h3>Account Rejected</h3>
             <p>You rejected the <strong>{$role}</strong> account belonging to
@@ -116,55 +110,69 @@ function sendStatusEmail($toEmail, $toName, $role, $status) {
         ";
     }
 
-    $adminSent = false;
     try {
         $adminMail = buildMailer(ADMIN_EMAIL, ADMIN_NAME, $adminSubject, $adminBody);
         $adminMail->send();
-        $adminSent = true;
     } catch (Exception $e) {
         error_log("Admin notification email failed to send: " . $e->getMessage());
     }
 
-    // Return true only if at least the user email succeeded (admin copy is a bonus, not critical)
     return $userSent;
 }
 
+
 /**
- * Sends a match-related notification email.
+ * Match notification email (works in both directions).
  *
- * $event can be: 'requested', 'accepted', 'rejected'
- * $recipientRole is the role of the PERSON RECEIVING this email ('farmer' or 'buyer')
+ * $recipientRole = role of the PERSON RECEIVING this email ('farmer' or 'buyer')
+ * $event         = 'requested' | 'accepted' | 'rejected'
+ * $otherPartyName/Phone/Email = the other side's details. Phone/email are only passed for 'accepted'.
  */
 function sendMatchEmail($toEmail, $toName, $recipientRole, $event, $cropType, $otherPartyName = null, $otherPartyPhone = null, $otherPartyEmail = null) {
+
+    $name       = htmlspecialchars($toName);
+    $crop       = htmlspecialchars($cropType);
+    $other      = $otherPartyName !== null ? htmlspecialchars($otherPartyName) : null;
+    $otherLabel = $recipientRole === 'farmer' ? 'buyer' : 'farmer';
+    $pageUrl    = $recipientRole === 'farmer'
+        ? 'http://localhost/AgriMatch/farmer/matches.php'
+        : 'http://localhost/AgriMatch/buyer/matched_farmers.php';
 
     $subject = "AgriMatch: Match " . ucfirst($event) . " — {$cropType}";
 
     if ($event === 'requested') {
-        // Only farmers receive this — a buyer wants to match with their listing
+        if ($recipientRole === 'farmer') {
+            $who  = $other ? "<strong>{$other}</strong> (a buyer)" : "A buyer";
+            $line = "{$who} has requested a match with your <strong>{$crop}</strong> produce on AgriMatch.";
+        } else {
+            $who  = $other ? "<strong>{$other}</strong> (a farmer)" : "A farmer";
+            $line = "{$who} has offered to supply <strong>{$crop}</strong> for your demand on AgriMatch.";
+        }
         $body = "
-            <h3>Hello {$toName},</h3>
-            <p>A buyer has requested to match with your <strong>{$cropType}</strong> listing on AgriMatch.</p>
-            <p>Please log in to review the request and accept or reject it.</p>
-            <p><a href='http://localhost/AgriMatch/farmer/matches.php'>View Match Request</a></p>
+            <h3>Hello {$name},</h3>
+            <p>{$line}</p>
+            <p>Log in to review the request and accept or decline it. Contact details are shared with both sides once a match is accepted.</p>
+            <p><a href='{$pageUrl}'>View the request</a></p>
             <br>
             <p>Regards,<br>AgriMatch Team</p>
         ";
 
     } elseif ($event === 'accepted') {
-        // Sent to BOTH parties once a farmer accepts
-        $contactBlock = "";
-        if ($otherPartyName) {
-            $label = $recipientRole === 'farmer' ? 'Buyer' : 'Farmer';
+        $contactBlock = '';
+        if ($other) {
+            $label = ucfirst($otherLabel);
+            $phone = htmlspecialchars((string) $otherPartyPhone);
+            $mail  = htmlspecialchars((string) $otherPartyEmail);
             $contactBlock = "
                 <p><strong>{$label} Contact Details:</strong><br>
-                Name: {$otherPartyName}<br>
-                Phone: {$otherPartyPhone}<br>
-                Email: {$otherPartyEmail}</p>
+                Name: {$other}<br>
+                Phone: {$phone}<br>
+                Email: {$mail}</p>
             ";
         }
         $body = "
-            <h3>Hello {$toName},</h3>
-            <p>Good news! Your <strong>{$cropType}</strong> match on AgriMatch has been <strong>accepted</strong>.</p>
+            <h3>Hello {$name},</h3>
+            <p>Good news! Your <strong>{$crop}</strong> match on AgriMatch has been <strong>accepted</strong>.</p>
             {$contactBlock}
             <p>You can now contact each other directly to arrange the transaction.</p>
             <br>
@@ -172,12 +180,11 @@ function sendMatchEmail($toEmail, $toName, $recipientRole, $event, $cropType, $o
         ";
 
     } else { // rejected
-        // Only the buyer receives this — the farmer declined
         $body = "
-            <h3>Hello {$toName},</h3>
-            <p>Unfortunately, your match request for <strong>{$cropType}</strong> was <strong>declined</strong> by the farmer.</p>
-            <p>Don't worry — other matching farmers may still be available. Log in to check your matches.</p>
-            <p><a href='http://localhost/AgriMatch/buyer/matched_farmers.php'>View Matched Farmers</a></p>
+            <h3>Hello {$name},</h3>
+            <p>Unfortunately, your match request for <strong>{$crop}</strong> was <strong>declined</strong> by the {$otherLabel}.</p>
+            <p>Other matches may still be available. Log in to check.</p>
+            <p><a href='{$pageUrl}'>Open AgriMatch</a></p>
             <br>
             <p>Regards,<br>AgriMatch Team</p>
         ";
@@ -190,5 +197,51 @@ function sendMatchEmail($toEmail, $toName, $recipientRole, $event, $cropType, $o
     } catch (Exception $e) {
         error_log("Match email failed to send to {$toEmail}: " . $e->getMessage());
         return false;
+    }
+}
+
+
+/**
+ * Email the OTHER party after someone creates a match request.
+ * $listing / $demand come from createMatchRequest() in match_engine.php.
+ */
+function notifyMatchRequested($listing, $demand, $actorRole) {
+    if ($actorRole === 'farmer') {
+        // Farmer requested -> tell the buyer
+        sendMatchEmail($demand['buyer_email'], $demand['buyer_name'], 'buyer', 'requested',
+            $listing['crop_type'], $listing['farmer_name']);
+    } else {
+        // Buyer requested -> tell the farmer
+        sendMatchEmail($listing['farmer_email'], $listing['farmer_name'], 'farmer', 'requested',
+            $listing['crop_type'], $demand['buyer_name']);
+    }
+}
+
+
+/**
+ * Emails after a request is accepted or declined.
+ * $result comes from respondToMatch() in match_engine.php.
+ */
+function notifyMatchResponse($result) {
+    $listing = $result['listing'];
+    $demand  = $result['demand'];
+    $match   = $result['match'];
+    $crop    = $listing['crop_type'];
+
+    if ($result['action'] === 'accept') {
+        // Both sides get the other's contact details
+        sendMatchEmail($listing['farmer_email'], $listing['farmer_name'], 'farmer', 'accepted', $crop,
+            $demand['buyer_name'], $demand['buyer_phone'], $demand['buyer_email']);
+        sendMatchEmail($demand['buyer_email'], $demand['buyer_name'], 'buyer', 'accepted', $crop,
+            $listing['farmer_name'], $listing['farmer_phone'], $listing['farmer_email']);
+    } else {
+        // Only the party who made the request is told it was declined
+        if ($match['requested_by'] === 'buyer') {
+            sendMatchEmail($demand['buyer_email'], $demand['buyer_name'], 'buyer', 'rejected', $crop,
+                $listing['farmer_name']);
+        } else {
+            sendMatchEmail($listing['farmer_email'], $listing['farmer_name'], 'farmer', 'rejected', $crop,
+                $demand['buyer_name']);
+        }
     }
 }

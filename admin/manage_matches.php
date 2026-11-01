@@ -3,8 +3,8 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../matching/match_engine.php';
 require_once __DIR__ . '/../includes/mailer.php';
-require_once '../matching/match_engine.php';
 
 // Guard: only admins allowed
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['match_id'], $_POST['a
     $matchId = (int) $_POST['match_id'];
 
     $stmt = $conn->prepare("
-        SELECT m.listing_id, m.demand_id, m.status, p.crop_type,
+        SELECT m.listing_id, m.demand_id, m.status AS match_status, p.crop_type,
                uf.full_name AS farmer_name, uf.email AS farmer_email,
                ub.full_name AS buyer_name, ub.email AS buyer_email
         FROM matches m
@@ -35,26 +35,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['match_id'], $_POST['a
     $stmt->close();
 
     if ($info) {
+        $wasAccepted = ($info['match_status'] === 'accepted');
+
         // Cancel the match
         $stmt = $conn->prepare("UPDATE matches SET status = 'rejected' WHERE match_id = ?");
         $stmt->bind_param('i', $matchId);
         $stmt->execute();
         $stmt->close();
 
-        // Reopen the listing and demand so they can be matched again
-        $stmt = $conn->prepare("UPDATE produce_listings SET status = 'available' WHERE listing_id = ?");
-        $stmt->bind_param('i', $info['listing_id']);
-        $stmt->execute();
-        $stmt->close();
+        // Only an ACCEPTED match changed the listing/demand, so only then are they reopened.
+        // (A listing that was sold or withdrawn is never silently re-listed.)
+        if ($wasAccepted) {
+            $stmt = $conn->prepare("UPDATE produce_listings SET status = 'available' WHERE listing_id = ? AND status = 'matched'");
+            $stmt->bind_param('i', $info['listing_id']);
+            $stmt->execute();
+            $stmt->close();
 
-        refreshDemandStatus($conn, $info['demand_id']);
+            // Demand stays 'matched' only if the remaining accepted farmers still cover it
+            refreshDemandStatus($conn, $info['demand_id']);
+        }
 
         // Notify both parties
         $subject = "AgriMatch: Match Cancelled by Admin — {$info['crop_type']}";
         $body = "
             <h3>Hello,</h3>
-            <p>An administrator has cancelled the <strong>{$info['crop_type']}</strong> match you were part of on AgriMatch.</p>
-            <p>The listing/demand involved has been reopened and is available for new matches.</p>
+            <p>An administrator has cancelled the <strong>" . htmlspecialchars($info['crop_type']) . "</strong> match you were part of on AgriMatch.</p>
+            <p>The produce and demand involved are available for new matches again.</p>
             <p>If you have questions, please contact the AgriMatch admin team.</p>
         ";
         try {
@@ -70,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['match_id'], $_POST['a
             error_log('Admin cancel email to buyer failed: ' . $e->getMessage());
         }
 
-        $_SESSION['flash'] = ['type' => 'warning', 'msg' => 'Match cancelled. Both parties have been notified and the listing/demand reopened.'];
+        $_SESSION['flash'] = ['type' => 'warning', 'msg' => 'Match cancelled. Both parties have been notified.'];
     }
 
     header('Location: /AgriMatch/admin/manage_matches.php');
@@ -82,9 +88,9 @@ $statusFilter = $_GET['status'] ?? '';
 $where = $statusFilter !== '' ? "WHERE m.status = ?" : '';
 
 $sql = "
-    SELECT m.match_id, m.status, m.match_date,
-           p.crop_type, p.quantity AS listing_quantity, p.unit,
-           d.min_quantity, d.preferred_location,
+    SELECT m.match_id, m.status, m.requested_by, m.match_date,
+           p.crop_type, p.quantity AS listing_quantity, p.unit AS listing_unit,
+           d.min_quantity, d.unit AS demand_unit, d.preferred_location,
            uf.full_name AS farmer_name, uf.phone AS farmer_phone, uf.email AS farmer_email,
            ub.full_name AS buyer_name, ub.phone AS buyer_phone, ub.email AS buyer_email
     FROM matches m
@@ -201,7 +207,8 @@ require_once __DIR__ . '/../includes/header.php';
                     <th>Crop</th>
                     <th>Farmer</th>
                     <th>Buyer</th>
-                    <th>Quantity</th>
+                    <th>Farmer's Quantity</th>
+                    <th>Requested By</th>
                     <th>Status</th>
                     <th>Date</th>
                     <th class="text-end">Actions</th>
@@ -209,14 +216,15 @@ require_once __DIR__ . '/../includes/header.php';
             </thead>
             <tbody>
                 <?php if (empty($matches)): ?>
-                    <tr><td colspan="7" class="text-center text-muted py-4">No matches found.</td></tr>
+                    <tr><td colspan="8" class="text-center text-muted py-4">No matches found.</td></tr>
                 <?php else: ?>
                     <?php foreach ($matches as $m): ?>
                         <tr>
                             <td><?php echo htmlspecialchars($m['crop_type']); ?></td>
                             <td><?php echo htmlspecialchars($m['farmer_name']); ?></td>
                             <td><?php echo htmlspecialchars($m['buyer_name']); ?></td>
-                            <td><?php echo number_format($m['listing_quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$m['unit']] ?? $m['unit']); ?></td>
+                            <td><?php echo number_format($m['listing_quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$m['listing_unit']] ?? $m['listing_unit']); ?></td>
+                            <td><span class="badge bg-secondary"><?php echo ucfirst($m['requested_by']); ?></span></td>
                             <td>
                                 <span class="badge bg-<?php
                                     echo $m['status'] === 'accepted' ? 'success' : ($m['status'] === 'proposed' ? 'warning' : 'danger');
@@ -252,18 +260,19 @@ require_once __DIR__ . '/../includes/header.php';
                             <p class="mb-1"><?php echo htmlspecialchars($m['farmer_name']); ?></p>
                             <p class="mb-1"><i class="bi bi-telephone"></i> <?php echo htmlspecialchars($m['farmer_phone']); ?></p>
                             <p class="mb-1"><i class="bi bi-envelope"></i> <?php echo htmlspecialchars($m['farmer_email']); ?></p>
-                            <p class="mb-1"><i class="bi bi-box-seam"></i> <?php echo number_format($m['listing_quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$m['unit']] ?? $m['unit']); ?> available</p>
+                            <p class="mb-1"><i class="bi bi-box-seam"></i> <?php echo number_format($m['listing_quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$m['listing_unit']] ?? $m['listing_unit']); ?> available</p>
                         </div>
                         <div class="col-md-6">
                             <h6 class="text-success">Buyer</h6>
                             <p class="mb-1"><?php echo htmlspecialchars($m['buyer_name']); ?></p>
                             <p class="mb-1"><i class="bi bi-telephone"></i> <?php echo htmlspecialchars($m['buyer_phone']); ?></p>
                             <p class="mb-1"><i class="bi bi-envelope"></i> <?php echo htmlspecialchars($m['buyer_email']); ?></p>
-                            <p class="mb-1"><i class="bi bi-clipboard-check"></i> Min. <?php echo number_format($m['min_quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$m['unit']] ?? $m['unit']); ?> needed</p>
+                            <p class="mb-1"><i class="bi bi-clipboard-check"></i> Needs <?php echo number_format($m['min_quantity'], 2) . ' ' . htmlspecialchars($unitLabels[$m['demand_unit']] ?? $m['demand_unit']); ?> in total</p>
                         </div>
                     </div>
                     <hr>
-                    <p><strong>Preferred Location:</strong> <?php echo htmlspecialchars($m['preferred_location']); ?></p>
+                    <p><strong>Delivery Location:</strong> <?php echo htmlspecialchars($m['preferred_location']); ?></p>
+                    <p><strong>Requested By:</strong> <?php echo ucfirst($m['requested_by']); ?></p>
                     <p><strong>Status:</strong>
                         <span class="badge bg-<?php
                             echo $m['status'] === 'accepted' ? 'success' : ($m['status'] === 'proposed' ? 'warning' : 'danger');
@@ -273,7 +282,7 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="modal-footer">
                     <?php if ($m['status'] !== 'rejected'): ?>
                         <form method="POST" class="d-inline"
-                              onsubmit="return confirm('Cancel this match? Both parties will be notified and the listing/demand reopened.');">
+                              onsubmit="return confirm('Cancel this match? Both parties will be notified.');">
                             <input type="hidden" name="match_id" value="<?php echo $m['match_id']; ?>">
                             <input type="hidden" name="action" value="cancel">
                             <button type="submit" class="btn btn-danger">
