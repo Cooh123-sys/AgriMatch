@@ -6,11 +6,11 @@ use PHPMailer\PHPMailer\SMTP;
 use PHPMailer\PHPMailer\Exception;
 
 // ---------- SHARED SMTP CREDENTIALS ----------
-define('SMTP_EMAIL',    'makinafrezer@gmail.com');   // <-- your Gmail address
-define('SMTP_APP_PASS', 'ejdhjxsrmmpvdnkh');
+define('SMTP_EMAIL',    'comfortolesi@gmail.com');   // <-- your Gmail address
+define('SMTP_APP_PASS', 'ygvjujbaeiimoqpr');
 
 // ---------- ADMIN NOTIFICATION RECIPIENT ----------
-define('ADMIN_EMAIL', 'makinafrezer@gmail.com');
+define('ADMIN_EMAIL', 'comfortolesi@gmail.com');
 define('ADMIN_NAME',  'AgriMatch Admin');
 
 
